@@ -1,42 +1,46 @@
 using AgentWebApp.Models;
-using Azure.AI.OpenAI;
-using Azure.Identity;
-using OpenAI.Chat;
+using AgentWebApp.Services.Providers;
 using System.Diagnostics;
 using System.Text;
 
 namespace AgentWebApp.Services;
 
 /// <summary>
-/// Implementation of AI Agent service using Azure OpenAI
-/// This implementation demonstrates the RAG (Retrieval Augmented Generation) pattern:
+/// Implementation of AI Agent service using the RAG (Retrieval Augmented Generation) pattern:
 /// 1. Query Azure AI Search for relevant context
-/// 2. Send context + user question to Azure OpenAI
+/// 2. Send context + user question to the LLM provider chain (Azure OpenAI -> Anthropic -> Gemini)
 /// 3. Return intelligent, grounded response
+///
+/// The completion itself goes through <see cref="IChatCompletionRouter"/>, so a provider that is
+/// rate limited, out of quota, timing out or returning 5xx is transparently replaced by the next one.
 /// </summary>
 public class AgentService : IAgentService
 {
+    private const string SystemPrompt = @"You are a helpful conference expert assistant specializing in Microsoft Ignite and Build conferences. 
+Your role is to answer questions about the Expert Meet-up sessions at these conferences.
+
+When answering:
+- Pay CLOSE ATTENTION to years/dates in the question (e.g., 2024 vs 2025 vs 2026)
+- Only use information from the CORRECT year mentioned in the question
+- Be concise and direct (3-4 sentences when possible)
+- Use the provided context to ground your responses
+- If the context doesn't contain information for the specific year requested, say so clearly
+- Focus on helping users understand session topics, schedules, and expert areas
+- Don't make up information - only use what's in the context
+- Always mention which conference and year you're answering about";
+
     private readonly ISearchService _searchService;
-    private readonly IConfiguration _configuration;
-    private readonly DefaultAzureCredential _credential;
+    private readonly IChatCompletionRouter _completionRouter;
     private readonly ILogger<AgentService> _logger;
-    private readonly HttpClient _httpClient;
-    private readonly AzureOpenAIClient _openAIClient;
 
     public AgentService(
         ISearchService searchService,
-        IConfiguration configuration,
-        DefaultAzureCredential credential,
-        ILogger<AgentService> logger,
-        IHttpClientFactory httpClientFactory,
-        AzureOpenAIClient openAIClient)
+        IChatCompletionRouter completionRouter,
+        ILogger<AgentService> logger)
     {
         _searchService = searchService;
-        _configuration = configuration;
-        _credential = credential;
+        _completionRouter = completionRouter;
         _logger = logger;
-        _httpClient = httpClientFactory.CreateClient();
-        _openAIClient = openAIClient ?? throw new ArgumentNullException(nameof(openAIClient), "Azure OpenAI client is required");
     }
 
     public async Task<ChatResponse> ProcessMessageAsync(
@@ -93,10 +97,11 @@ public class AgentService : IAgentService
                 }
             }
 
-            // Step 3: Call Azure OpenAI with context
-            var agentResponse = await CallAzureOpenAIAsync(
+            // Step 3: Call the provider chain with the context
+            var context = contextBuilder.ToString();
+            var completion = await CompleteWithFallbackAsync(
                 request.Message,
-                contextBuilder.ToString(),
+                context,
                 conversationId,
                 cancellationToken
             );
@@ -105,13 +110,16 @@ public class AgentService : IAgentService
 
             return new ChatResponse
             {
-                Message = agentResponse,
+                Message = completion.Text,
                 ConversationId = conversationId,
                 Citations = citations.Count > 0 ? citations : null,
                 Metadata = new ResponseMetadata
                 {
                     Timestamp = DateTime.UtcNow,
-                    Model = _configuration["AzureOpenAI:DeploymentName"] ?? "gpt-4.1-mini",
+                    Model = completion.Model,
+                    Provider = completion.Provider,
+                    FallbackUsed = completion.FallbackUsed,
+                    ProviderAttempts = completion.Attempts,
                     ProcessingTimeMs = stopwatch.ElapsedMilliseconds
                 }
             };
@@ -123,76 +131,83 @@ public class AgentService : IAgentService
         }
     }
 
-    private async Task<string> CallAzureOpenAIAsync(
+    /// <summary>
+    /// Runs the completion through the provider chain. If every provider is unavailable the
+    /// agent degrades to a search-only answer instead of failing the request outright.
+    /// </summary>
+    private async Task<AgentCompletion> CompleteWithFallbackAsync(
         string userMessage,
         string context,
         string conversationId,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            var deploymentName = _configuration["AzureOpenAI:DeploymentName"] ?? "gpt-4.1-mini";
-            
-            _logger.LogInformation("Calling Azure OpenAI deployment: {DeploymentName}", deploymentName);
-
-            // Build messages for chat completion
-            var systemPrompt = @"You are a helpful conference expert assistant specializing in Microsoft Ignite and Build conferences. 
-Your role is to answer questions about the Expert Meet-up sessions at these conferences.
-
-When answering:
-- Pay CLOSE ATTENTION to years/dates in the question (e.g., 2024 vs 2025 vs 2026)
-- Only use information from the CORRECT year mentioned in the question
-- Be concise and direct (3-4 sentences when possible)
-- Use the provided context to ground your responses
-- If the context doesn't contain information for the specific year requested, say so clearly
-- Focus on helping users understand session topics, schedules, and expert areas
-- Don't make up information - only use what's in the context
-- Always mention which conference and year you're answering about";
-
-            var userPrompt = string.IsNullOrEmpty(context)
-                ? userMessage
-                : $@"Context from conference documents:
+        var userPrompt = string.IsNullOrEmpty(context)
+            ? userMessage
+            : $@"Context from conference documents:
 {context}
 
 Question: {userMessage}
 
 Please answer based on the context provided above.";
 
-            var chatClient = _openAIClient.GetChatClient(deploymentName);
-            
-            var chatMessages = new List<ChatMessage>
-            {
-                new SystemChatMessage(systemPrompt),
-                new UserChatMessage(userPrompt)
-            };
-
-            var chatOptions = new ChatCompletionOptions
-            {
-                MaxOutputTokenCount = 800,
-                Temperature = 0.7f
-            };
-
-            _logger.LogDebug("Sending request to Azure OpenAI...");
-            var response = await chatClient.CompleteChatAsync(chatMessages, chatOptions, cancellationToken);
-            
-            var responseText = response.Value.Content[0].Text;
-            _logger.LogInformation("Received response from Azure OpenAI ({Length} characters)", responseText.Length);
-            
-            return responseText;
-        }
-        catch (Exception ex)
+        var completionRequest = new ChatCompletionRequest
         {
-            _logger.LogError(ex, "Error calling Azure OpenAI");
-            
-            // Fall back to simple response if OpenAI fails
-            return GenerateFallbackResponse(userMessage, context);
+            SystemPrompt = SystemPrompt,
+            UserPrompt = userPrompt,
+            MaxOutputTokens = 800,
+            Temperature = 0.7f,
+            CorrelationId = conversationId
+        };
+
+        try
+        {
+            var result = await _completionRouter.CompleteAsync(completionRequest, cancellationToken);
+
+            return new AgentCompletion
+            {
+                Text = result.Text,
+                Provider = result.ProviderName,
+                Model = result.Model,
+                FallbackUsed = result.FallbackUsed,
+                Attempts = result.Attempts.Select(a => a.Describe()).ToList()
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (AllProvidersFailedException ex)
+        {
+            _logger.LogError(ex, "Every AI provider failed for conversation {ConversationId}; answering from search results only", conversationId);
+
+            return new AgentCompletion
+            {
+                Text = GenerateFallbackResponse(userMessage, context),
+                Provider = "none",
+                Model = "search-only",
+                FallbackUsed = true,
+                Attempts = ex.Attempts.Select(a => a.Describe()).ToList()
+            };
+        }
+        catch (ProviderCallException ex)
+        {
+            // The request itself was rejected (malformed, too large, refused), so no provider would take it.
+            _logger.LogError(ex, "Provider {Provider} rejected the request for conversation {ConversationId}", ex.ProviderName, conversationId);
+
+            return new AgentCompletion
+            {
+                Text = GenerateFallbackResponse(userMessage, context),
+                Provider = "none",
+                Model = "search-only",
+                FallbackUsed = true,
+                Attempts = new List<string> { ex.Message }
+            };
         }
     }
 
     private string GenerateFallbackResponse(string userMessage, string context)
     {
-        // Simple fallback for the workshop
-        // In production, this would be the actual Foundry agent call
+        // Last-resort answer built from the search results when no LLM provider is reachable
         
         if (string.IsNullOrEmpty(context))
         {
@@ -214,5 +229,19 @@ Please answer based on the context provided above.";
         }
 
         return $"Based on the conference information I found:\n\n{context.Substring(0, Math.Min(400, context.Length))}...\n\nWould you like to know more?";
+    }
+
+    /// <summary>Internal carrier for the completion plus the provider trail behind it.</summary>
+    private sealed class AgentCompletion
+    {
+        public required string Text { get; init; }
+
+        public required string Provider { get; init; }
+
+        public required string Model { get; init; }
+
+        public required bool FallbackUsed { get; init; }
+
+        public required List<string> Attempts { get; init; }
     }
 }

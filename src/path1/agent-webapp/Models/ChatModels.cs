@@ -84,6 +84,22 @@ public class ResponseMetadata
     public string? Model { get; set; }
 
     /// <summary>
+    /// Provider that produced the answer (AzureOpenAI, Anthropic, Gemini, or "none"
+    /// when every provider failed and the answer came from search results only)
+    /// </summary>
+    public string? Provider { get; set; }
+
+    /// <summary>
+    /// True when the primary provider failed and a fallback produced the answer
+    /// </summary>
+    public bool FallbackUsed { get; set; }
+
+    /// <summary>
+    /// One entry per provider attempt, in order, including the failures that triggered a fallback
+    /// </summary>
+    public List<string>? ProviderAttempts { get; set; }
+
+    /// <summary>
     /// Processing time in milliseconds
     /// </summary>
     public long ProcessingTimeMs { get; set; }

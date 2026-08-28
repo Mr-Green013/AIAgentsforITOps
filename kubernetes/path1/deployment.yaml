@@ -40,6 +40,35 @@ spec:
         - name: Foundry__ModelDeploymentName
           value: "gpt-4o"
         
+        # LLM provider failover chain: Azure OpenAI -> Anthropic (Claude) -> Gemini.
+        # A provider without credentials is skipped, so this order is safe to keep as-is.
+        - name: AIProviders__Order__0
+          value: "AzureOpenAI"
+        - name: AIProviders__Order__1
+          value: "Anthropic"
+        - name: AIProviders__Order__2
+          value: "Gemini"
+        - name: AIProviders__AzureOpenAI__DeploymentName
+          value: "gpt-4.1-mini"
+        - name: AIProviders__Anthropic__Model
+          value: "claude-opus-5"
+        - name: AIProviders__Gemini__Model
+          value: "gemini-2.5-flash"
+        
+        # Fallback provider API keys. Preferred: mount them from Key Vault via the
+        # SecretProviderClass (Anthropic-ApiKey / Gemini-ApiKey). Alternatively reference a
+        # Kubernetes secret here - uncomment after creating it:
+        # - name: AIProviders__Anthropic__ApiKey
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: ai-provider-keys
+        #       key: anthropic-api-key
+        # - name: AIProviders__Gemini__ApiKey
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: ai-provider-keys
+        #       key: gemini-api-key
+        
         volumeMounts:
         # Mount Key Vault secrets via CSI driver
         - name: keyvault-secrets

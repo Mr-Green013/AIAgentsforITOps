@@ -1,5 +1,6 @@
 using AgentWebApp.Models;
 using AgentWebApp.Services;
+using AgentWebApp.Services.Providers;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AgentWebApp.Controllers;
@@ -12,11 +13,16 @@ namespace AgentWebApp.Controllers;
 public class ChatController : ControllerBase
 {
     private readonly IAgentService _agentService;
+    private readonly IChatCompletionRouter _completionRouter;
     private readonly ILogger<ChatController> _logger;
 
-    public ChatController(IAgentService agentService, ILogger<ChatController> logger)
+    public ChatController(
+        IAgentService agentService,
+        IChatCompletionRouter completionRouter,
+        ILogger<ChatController> logger)
     {
         _agentService = agentService;
+        _completionRouter = completionRouter;
         _logger = logger;
     }
 
@@ -72,7 +78,24 @@ public class ChatController : ControllerBase
                 "Provide information about Expert Meet-up areas",
                 "Search conference schedules",
                 "Recommend relevant sessions"
-            }
+            },
+            providers = _completionRouter.DescribeProviders()
+        });
+    }
+
+    /// <summary>
+    /// Get the LLM provider failover chain and whether each provider is configured
+    /// </summary>
+    [HttpGet("providers")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<object> GetProviders()
+    {
+        var providers = _completionRouter.DescribeProviders();
+
+        return Ok(new
+        {
+            chain = providers,
+            active = providers.Where(p => p.Configured).Select(p => p.Name)
         });
     }
 }

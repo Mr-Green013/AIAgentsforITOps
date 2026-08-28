@@ -27,15 +27,23 @@ src/
 **Description**: Full-featured ASP.NET Core web application that:
 - Runs the AI agent directly in the container
 - Integrates with Azure OpenAI for LLM reasoning
+- Falls back to Anthropic (Claude) and Gemini when Azure OpenAI is unavailable
 - Implements RAG pattern (Retrieval Augmented Generation)
 - Queries Azure AI Search for context
 - Serves chat UI via static files
 
 **Key Components**:
-- `Services/AgentService.cs` - Azure OpenAI integration and RAG pattern
+- `Services/AgentService.cs` - RAG pattern orchestration
+- `Services/Providers/` - Multi-provider LLM failover chain ([details](path1/agent-webapp/Services/Providers/README.md))
 - `Services/SearchService.cs` - Azure AI Search client
 - `Controllers/ChatController.cs` - REST API for chat
 - `wwwroot/index.html` - Chat interface
+
+**LLM failover**: a chat completion is tried against Azure OpenAI first; on a rate limit (429),
+exhausted quota, timeout or 5xx it is retried on Anthropic (Claude), then on Gemini. Providers
+without credentials are skipped, so the workshop runs unchanged with Azure OpenAI alone.
+Order, models and retry budgets live in the `AIProviders` configuration section, and each
+response reports the provider that answered in `metadata.provider`.
 
 **Technologies**:
 - .NET 8.0

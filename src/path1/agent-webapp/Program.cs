@@ -1,7 +1,9 @@
 using AgentWebApp.Services;
+using AgentWebApp.Services.Providers;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,9 +30,23 @@ string ReadSecretFromFile(string secretName)
 // Load secrets from mounted files and add to configuration
 builder.Configuration["ApplicationInsights:ConnectionString"] = ReadSecretFromFile("ApplicationInsights-ConnectionString");
 builder.Configuration["AzureOpenAI:Endpoint"] = ReadSecretFromFile("AzureOpenAI-Endpoint");
-builder.Configuration["AzureOpenAI:DeploymentName"] = "gpt-4.1-mini";  // Default deployment name
 builder.Configuration["AzureSearch:Endpoint"] = ReadSecretFromFile("AzureSearch-Endpoint");
 var managedIdentityClientId = ReadSecretFromFile("AKS-ManagedIdentity-ClientId");
+
+// Fallback provider API keys (optional). They are mounted the same way as the Azure secrets,
+// and can also be supplied through configuration or the AIProviders__<Provider>__ApiKey env vars.
+// Only overwrite configuration when a secret file actually provided a value.
+var anthropicApiKey = ReadSecretFromFile("Anthropic-ApiKey");
+if (!string.IsNullOrWhiteSpace(anthropicApiKey))
+{
+    builder.Configuration["AIProviders:Anthropic:ApiKey"] = anthropicApiKey;
+}
+
+var geminiApiKey = ReadSecretFromFile("Gemini-ApiKey");
+if (!string.IsNullOrWhiteSpace(geminiApiKey))
+{
+    builder.Configuration["AIProviders:Gemini:ApiKey"] = geminiApiKey;
+}
 
 // Configure Azure credentials - use Managed Identity in AKS with workload identity
 var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
@@ -72,24 +88,59 @@ builder.Services.AddSwaggerGen(c =>
 // Register Azure credential as a service
 builder.Services.AddSingleton(credential);
 
-// Register Azure OpenAI client (required for Path 1)
+// Multi-provider chat completion chain: Azure OpenAI -> Anthropic (Claude) -> Gemini.
+// Ordering, per-provider models and retry/timeout budgets all come from the AIProviders section.
+builder.Services.Configure<AIProviderOptions>(builder.Configuration.GetSection(AIProviderOptions.SectionName));
+
+var providerOptions = builder.Configuration
+    .GetSection(AIProviderOptions.SectionName)
+    .Get<AIProviderOptions>() ?? new AIProviderOptions();
+
+// Register the Azure OpenAI client only when an endpoint is available; without it the
+// Azure OpenAI provider simply reports itself as unconfigured and the router skips it.
 var openAIEndpoint = builder.Configuration["AzureOpenAI:Endpoint"];
-if (string.IsNullOrEmpty(openAIEndpoint))
+if (!string.IsNullOrEmpty(openAIEndpoint))
 {
-    throw new InvalidOperationException(
-        "Azure OpenAI endpoint is not configured. " +
-        "Ensure the AzureOpenAI-Endpoint secret is mounted at /mnt/secrets-store/ or configured in appsettings.json");
+    builder.Services.AddSingleton(sp =>
+    {
+        var cred = sp.GetRequiredService<DefaultAzureCredential>();
+        Console.WriteLine($"Configuring Azure OpenAI client with endpoint: {openAIEndpoint}");
+        return new AzureOpenAIClient(new Uri(openAIEndpoint), cred);
+    });
+}
+else
+{
+    Console.WriteLine("Azure OpenAI endpoint is not configured; the Azure OpenAI provider will be skipped.");
 }
 
-builder.Services.AddSingleton(sp =>
+// At least one provider has to be usable, otherwise every chat request would fail at runtime.
+if (string.IsNullOrEmpty(openAIEndpoint) &&
+    string.IsNullOrWhiteSpace(providerOptions.Anthropic.ApiKey) &&
+    string.IsNullOrWhiteSpace(providerOptions.Gemini.ApiKey))
 {
-    var cred = sp.GetRequiredService<DefaultAzureCredential>();
-    Console.WriteLine($"Configuring Azure OpenAI client with endpoint: {openAIEndpoint}");
-    return new AzureOpenAIClient(new Uri(openAIEndpoint), cred);
-});
+    throw new InvalidOperationException(
+        "No AI provider is configured. Mount the AzureOpenAI-Endpoint secret at /mnt/secrets-store/, " +
+        "or configure an Anthropic/Gemini API key under the AIProviders section " +
+        "(AIProviders__Anthropic__ApiKey / AIProviders__Gemini__ApiKey).");
+}
 
 // Add HTTP client factory
 builder.Services.AddHttpClient();
+
+// Dedicated HTTP clients for the REST based providers. Their timeout is kept slightly above the
+// per-request budget so the router classifies the timeout instead of HttpClient aborting first.
+var httpClientTimeout = TimeSpan.FromSeconds(Math.Max(1, providerOptions.RequestTimeoutSeconds) + 10);
+builder.Services.AddHttpClient(AnthropicChatProvider.HttpClientName, client => client.Timeout = httpClientTimeout);
+builder.Services.AddHttpClient(GeminiChatProvider.HttpClientName, client => client.Timeout = httpClientTimeout);
+
+// Provider chain. Registration order does not matter - AIProviders:Order defines the failover order.
+builder.Services.AddSingleton<IChatCompletionProvider>(sp => new AzureOpenAIChatProvider(
+    sp.GetRequiredService<IOptions<AIProviderOptions>>(),
+    sp.GetRequiredService<ILogger<AzureOpenAIChatProvider>>(),
+    sp.GetService<AzureOpenAIClient>()));
+builder.Services.AddSingleton<IChatCompletionProvider, AnthropicChatProvider>();
+builder.Services.AddSingleton<IChatCompletionProvider, GeminiChatProvider>();
+builder.Services.AddSingleton<IChatCompletionRouter, ChatCompletionRouter>();
 
 // Add application services
 builder.Services.AddSingleton<ISearchService, SearchService>();
