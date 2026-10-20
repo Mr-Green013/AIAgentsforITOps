@@ -44,6 +44,13 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+# "powershell -File" passes -Roots 'D:\','E:\' as ONE string (quotes included on 5.1), so split and unquote.
+function Split-PathList([string[]]$List) {
+    @($List | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().Trim("'", '"').Trim() } | Where-Object { $_ })
+}
+$Roots          = Split-PathList $Roots
+$PreferredRoots = Split-PathList $PreferredRoots
+
 $HeadBytes   = 1MB
 $MinSize     = [int64]$MinSizeKB * 1KB
 $SkipDirs    = @('$RECYCLE.BIN', 'System Volume Information', '_to_delete')
@@ -165,7 +172,8 @@ $sha.Dispose()
 # ---------- keeper selection + report ----------
 function Test-Preferred([string]$Path) {
     foreach ($p in $PreferredRoots) {
-        $root = $p.TrimEnd('\') + '\'
+        $sep  = [IO.Path]::DirectorySeparatorChar
+        $root = $p.TrimEnd('\', '/') + $sep
         if ($Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { return $true }
     }
     return $false
