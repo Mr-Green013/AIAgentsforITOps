@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="th" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ATT&amp;CK Mind Map Studio</title>
+  <meta name="description" content="Interactive MITRE ATT&CK mind map, kill-chain matrix, APT overlay and full TTP database (Enterprise, Mobile, ICS) — unofficial community tool." />
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    // Guarded so a blocked CDN does not throw before the app scripts run.
+    if (window.tailwind) {
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['"Inter"', '"Noto Sans Thai"', 'sans-serif'],
+              mono: ['"JetBrains Mono"', 'monospace']
+            }
+          }
+        }
+      };
+    }
+  </script>
+  <style>
+    :root { color-scheme: dark; --page-bg: #020617; --page-fg: #f1f5f9; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Inter', 'Noto Sans Thai', sans-serif;
+      overflow-x: hidden;
+      background: var(--page-bg);
+      color: var(--page-fg);
+    }
+    .mindmap-viewport {
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+      background-color: #0b0f19;
+      background-image: radial-gradient(rgba(99, 102, 241, 0.16) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    .mindmap-viewport:active { cursor: grabbing; }
+    .mm-node {
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .mm-node:hover { transform: translateY(-2px); }
+    .mm-edge {
+      fill: none;
+      transition: stroke 0.25s ease, stroke-width 0.25s ease, opacity 0.25s ease;
+    }
+    .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scroll::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+    .custom-scroll::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.5); border-radius: 9999px; }
+    .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.8); }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.55); }
+      70% { box-shadow: 0 0 0 10px rgba(244, 63, 94, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+    }
+    .apt-highlight { animation: pulse-ring 2s infinite; }
+    .mindmap-viewport.paper-theme {
+      background-color: #f8fafc;
+      background-image: radial-gradient(rgba(100, 116, 139, 0.22) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    @keyframes bubbleBurst {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(0.45); }
+      75% { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
+      100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+    .spider-bubble {
+      transform: translate(-50%, -50%);
+      animation: bubbleBurst 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+    }
+    .spider-bubble:hover {
+      z-index: 30 !important;
+      box-shadow: 0 10px 25px -4px rgba(0, 0, 0, 0.22), 0 0 0 3px rgba(99, 102, 241, 0.25) !important;
+    }
+    .mindmap-viewport.constellation-theme {
+      background-color: #05060b;
+      background-image:
+        radial-gradient(circle at 50% 50%, rgba(30, 41, 59, 0.32) 0%, rgba(5, 6, 11, 0.96) 75%),
+        radial-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+      background-size: 100% 100%, 32px 32px;
+    }
+    @keyframes orbPop {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(0.2); }
+      75% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+      100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+    .net-orb-wrapper {
+      transform: translate(-50%, -50%);
+      animation: orbPop 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      transition: filter 0.2s ease, opacity 0.25s ease;
+    }
+    .net-orb-wrapper:hover { z-index: 45 !important; filter: brightness(1.2); }
+    .net-orb-circle { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+    .net-orb-wrapper:hover .net-orb-circle { transform: scale(1.18); }
+    .net-label {
+      text-shadow: 0 2px 6px rgba(0,0,0,0.95), 0 0 12px rgba(0,0,0,0.9);
+      pointer-events: auto;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .apt-highlight, .spider-bubble, .net-orb-wrapper { animation: none; }
+      .spider-bubble, .net-orb-wrapper { transform: translate(-50%, -50%); }
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-indigo-500 selection:text-white">
+
+  <!-- Top Navigation & Control Header -->
+  <header class="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-3 sm:px-5 py-2.5">
+    <div class="max-w-[1800px] mx-auto flex flex-wrap items-center justify-between gap-2.5">
+      <!-- Brand Title -->
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-rose-500 via-indigo-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 shrink-0">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
+          </svg>
+        </div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <h1 class="text-sm sm:text-base font-bold tracking-tight text-white">MITRE ATT&amp;CK® Mind Map Studio</h1>
+            <span class="hidden md:inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">v20.0 All-Domain Edition</span>
+          </div>
+          <p class="text-[11px] text-slate-400 hidden sm:block">แผนผังความคิดแบบโต้ตอบครบทุกมิติ: Enterprise (15 Tactics - v20.0) • Mobile • ICS/OT • APT Groups • Red/Blue/SOC</p>
+          <p class="text-[10px] text-slate-500 hidden sm:block">เครื่องมือชุมชนอย่างไม่เป็นทางการ — ไม่ได้มีส่วนเกี่ยวข้องหรือได้รับการรับรองจาก MITRE • ATT&amp;CK® is a registered trademark of The MITRE Corporation</p>
+        </div>
+      </div>
+
+      <!-- View Switcher Tabs -->
+      <div class="flex items-center bg-slate-950/90 p-1 rounded-xl border border-slate-800 max-w-full overflow-x-auto custom-scroll" role="tablist">
+        <button id="tabBtnMindmap" onclick="switchMainView('mindmap')" class="px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 bg-indigo-600 text-white shadow shrink-0">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg>
+          <span>Mind Map</span>
+        </button>
+        <button id="tabBtnMatrix" onclick="switchMainView('matrix')" class="px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 text-slate-400 hover:text-white shrink-0">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/></svg>
+          <span>Kill-Chain Matrix</span>
+        </button>
+        <button id="tabBtnGroups" onclick="switchMainView('groups')" class="px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 text-slate-400 hover:text-white shrink-0">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z"/></svg>
+          <span>APT &amp; Malware</span>
+        </button>
+        <button id="tabBtnPlaybook" onclick="switchMainView('playbook')" class="px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 text-slate-400 hover:text-white shrink-0">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/></svg>
+          <span>Role Playbooks</span>
+        </button>
+        <button id="tabBtnDatabase" onclick="switchMainView('database')" class="px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 text-emerald-300 hover:text-white shrink-0">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg>
+          <span>ฐานข้อมูลครบทุกข้อ (935 TTPs)</span>
+        </button>
+      </div>
+
+      <!-- Search & Export Controls -->
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="relative">
+          <input id="globalSearchInput" type="text" oninput="handleSearchInput(this.value)" placeholder="ค้นหา ID (เช่น T1059, TA0001, Phishing)..." class="w-44 sm:w-60 bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl pl-8 pr-7 py-1.5 text-xs text-slate-100 placeholder-slate-500 outline-none transition-all" />
+          <svg class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/></svg>
+          <button id="clearSearchBtn" onclick="clearSearch()" class="hidden absolute right-2 top-1.5 text-slate-400 hover:text-white text-xs">✕</button>
+        </div>
+
+        <button onclick="openExportModal()" class="px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-medium flex items-center gap-1.5 transition-all">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+          <span>Export โค้ด / JSON</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Secondary Filter Bar: Domain Lens, Threat Actor Overlay & Role Perspective -->
+    <div class="max-w-[1800px] mx-auto mt-2 pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-slate-400 font-medium">มุมมองแกนหลัก (Domain Filter):</span>
+        <div class="flex flex-wrap items-center gap-1" id="domainFilterGroup">
+          <button onclick="setDomainFilter('all')" data-domain="all" class="domain-chip px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-medium transition-all">ทั้งหมด (All Domains)</button>
+          <button onclick="setDomainFilter('enterprise')" data-domain="enterprise" class="domain-chip px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 transition-all">Enterprise (15 Tactics - v20.0)</button>
+          <button onclick="setDomainFilter('mobile')" data-domain="mobile" class="domain-chip px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 transition-all">Mobile (Android/iOS)</button>
+          <button onclick="setDomainFilter('ics')" data-domain="ics" class="domain-chip px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 transition-all">ICS / OT</button>
+          <button onclick="setDomainFilter('cti')" data-domain="cti" class="domain-chip px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 transition-all">APT &amp; Malware</button>
+          <button onclick="setDomainFilter('defense')" data-domain="defense" class="domain-chip px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 transition-all">SOC / Red / Purple</button>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
+          <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+          <label for="aptSimulatorSelect" class="text-slate-400 text-[11px]">จำลองเส้นทางโจมตี (APT Overlay):</label>
+          <select id="aptSimulatorSelect" onchange="setAptOverlay(this.value)" class="bg-transparent text-rose-300 font-medium text-xs outline-none cursor-pointer">
+            <option value="none" class="bg-slate-900 text-slate-200">-- ปิดการจำลอง (แสดงปกติ) --</option>
+            <option value="G0016" class="bg-slate-900 text-rose-300">APT29 (Cozy Bear / SolarWinds C0024)</option>
+            <option value="G0007" class="bg-slate-900 text-rose-300">APT28 (Fancy Bear / GRU)</option>
+            <option value="G0032" class="bg-slate-900 text-rose-300">Lazarus Group &amp; APT38 (North Korea)</option>
+            <option value="G0034" class="bg-slate-900 text-rose-300">Sandworm Team (OT/ICS &amp; Wiper Operations)</option>
+            <option value="LOCKBIT" class="bg-slate-900 text-rose-300">Modern Ransomware &amp; Mimikatz (S0002) Chain</option>
+          </select>
+        </div>
+
+        <div class="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
+          <label for="roleFocusSelect" class="text-slate-400 text-[11px]">เลนส์ผู้ใช้งาน:</label>
+          <select id="roleFocusSelect" onchange="setRoleLens(this.value)" class="bg-transparent text-cyan-300 font-medium text-xs outline-none cursor-pointer">
+            <option value="all" class="bg-slate-900 text-slate-200">ครบทุกด้าน (360° Full View)</option>
+            <option value="blue" class="bg-slate-900 text-cyan-300">Blue Team / SOC (Detection &amp; Mitigation)</option>
+            <option value="red" class="bg-slate-900 text-rose-300">Red Team / Pentest (Offensive Procedures)</option>
+            <option value="cti" class="bg-slate-900 text-amber-300">Threat Intelligence (APT &amp; Mapping)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sub-Domain / Platform Matrix Filter Bar -->
+    <div class="max-w-[1800px] mx-auto mt-1.5 pt-1.5 border-t border-slate-800/60 flex items-center gap-2 overflow-x-auto custom-scroll pb-1 text-[11px]">
+      <span class="text-amber-300 font-semibold shrink-0">🌐 Sub-Domains (18 แพลตฟอร์มย่อย):</span>
+      <div class="flex items-center gap-1 shrink-0" id="subdomainFilterGroup">
+        <button onclick="setSubdomainFilter('all')" data-subdomain="all" class="subdomain-chip px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold transition-all">ทุก Sub-domain (All 935 TTPs)</button>
+        <button onclick="setSubdomainFilter('PRE')" data-subdomain="PRE" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">PRE (21)</button>
+        <button onclick="setSubdomainFilter('Windows')" data-subdomain="Windows" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">Windows (179)</button>
+        <button onclick="setSubdomainFilter('macOS')" data-subdomain="macOS" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">macOS (154)</button>
+        <button onclick="setSubdomainFilter('Linux')" data-subdomain="Linux" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">Linux (155)</button>
+        <button onclick="setSubdomainFilter('Cloud')" data-subdomain="Cloud" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">Cloud All (82)</button>
+        <button onclick="setSubdomainFilter('Office Suite')" data-subdomain="Office Suite" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">Office Suite (39)</button>
+        <button onclick="setSubdomainFilter('Identity Provider')" data-subdomain="Identity Provider" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">Identity Provider (23)</button>
+        <button onclick="setSubdomainFilter('SaaS')" data-subdomain="SaaS" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">SaaS (44)</button>
+        <button onclick="setSubdomainFilter('IaaS')" data-subdomain="IaaS" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">IaaS (57)</button>
+        <button onclick="setSubdomainFilter('Network Devices')" data-subdomain="Network Devices" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">Network Devices (53)</button>
+        <button onclick="setSubdomainFilter('Containers')" data-subdomain="Containers" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">Containers (29)</button>
+        <button onclick="setSubdomainFilter('ESXi')" data-subdomain="ESXi" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">ESXi (64)</button>
+        <button onclick="setSubdomainFilter('Android')" data-subdomain="Android" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">Android (77)</button>
+        <button onclick="setSubdomainFilter('iOS')" data-subdomain="iOS" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">iOS (55)</button>
+        <button onclick="setSubdomainFilter('ICS Embedded')" data-subdomain="ICS Embedded" class="subdomain-chip px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition-all">ICS Embedded/OT (78)</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Workspace Area -->
+  <div class="flex-1 flex flex-col lg:flex-row relative overflow-hidden">
+
+    <main class="flex-1 flex flex-col relative min-h-[540px] lg:min-h-[calc(100vh-112px)] overflow-hidden min-w-0">
+
+      <!-- VIEW 1: INTERACTIVE MIND MAP CANVAS -->
+      <section id="viewMindmap" class="flex-1 flex flex-col relative h-full">
+        <div class="absolute top-3 left-3 right-3 sm:right-auto z-20 flex flex-wrap items-center gap-1.5 bg-slate-900/90 backdrop-blur-md p-1.5 rounded-xl border border-slate-800 shadow-xl">
+          <button onclick="zoomMindmap(1.18)" title="ซูมเข้า" class="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+          </button>
+          <span id="zoomLevelBadge" class="text-[11px] font-mono text-slate-400 px-1.5">88%</span>
+          <button onclick="zoomMindmap(0.84)" title="ซูมออก" class="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12h-15"/></svg>
+          </button>
+          <div class="w-px h-4 bg-slate-800 mx-0.5"></div>
+          <button onclick="toggleMindmapLayout()" id="layoutToggleBtn" class="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-semibold shadow transition-all">🌌 โหมด Network Mapping (วงกลมเครือข่าย)</button>
+          <button onclick="togglePaperTheme()" id="paperThemeBtn" class="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-medium hover:bg-amber-500/30 transition-all">🌙 พื้นมืด Constellation</button>
+          <div class="w-px h-4 bg-slate-800 mx-0.5"></div>
+          <button onclick="resetMindmapViewport()" class="px-2 py-1 rounded-lg hover:bg-slate-800 text-xs text-slate-300 hover:text-white transition-colors">จัดกึ่งกลาง</button>
+          <button onclick="collapseAllToMainTopics()" class="px-2 py-1 rounded-lg hover:bg-slate-800 text-xs text-rose-300 hover:text-white transition-colors">หุบเหลือหัวข้อใหญ่</button>
+          <button onclick="expandToLevel(2)" class="px-2 py-1 rounded-lg hover:bg-slate-800 text-xs text-slate-300 hover:text-white transition-colors">ย่อระดับ Tactic</button>
+          <button onclick="expandToLevel(3)" class="px-2 py-1 rounded-lg hover:bg-slate-800 text-xs text-indigo-300 hover:text-white transition-colors">กาง Techniques ทั้งหมด</button>
+          <button onclick="expandToLevel(4)" class="px-2 py-1 rounded-lg hover:bg-slate-800 text-xs text-emerald-300 hover:text-white transition-colors">กางลึกสุด</button>
+          <button id="resetCenterRootBtn" onclick="setCustomCenterRoot('ROOT')" class="hidden px-2.5 py-1 rounded-lg bg-rose-600 text-white text-xs font-semibold shadow">⬅ กลับจุดศูนย์กลางหลัก</button>
+        </div>
+
+        <div class="absolute bottom-3 left-3 z-20 flex flex-wrap items-center gap-3 bg-slate-900/90 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-800 text-[11px] text-slate-300 shadow-lg">
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span><span>Root / Domain</span></div>
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-cyan-500"></span><span>Tactic (Why)</span></div>
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span><span>Technique (How)</span></div>
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span><span>APT Kill-Chain Match</span></div>
+          <span class="text-slate-500 hidden sm:inline">| ลากเมาส์เพื่อเลื่อนแผนผัง • คลิกที่โหนดเพื่อดูรายละเอียด/ย่อ-ขยาย</span>
+        </div>
+
+        <div id="aptActiveBanner" class="hidden absolute top-3 right-3 z-20 max-w-md bg-rose-950/90 backdrop-blur-md border border-rose-500/50 rounded-xl px-3.5 py-2 text-xs text-rose-200 shadow-xl">
+          <div class="flex items-center justify-between gap-2">
+            <span id="aptBannerTitle" class="font-bold text-rose-300">กำลังจำลองเส้นทางโจมตี</span>
+            <button onclick="setAptOverlay('none')" class="text-[11px] underline text-rose-300 hover:text-white">ล้างค่า</button>
+          </div>
+          <p id="aptBannerDesc" class="text-[11px] text-rose-200/90 mt-0.5"></p>
+        </div>
+
+        <div id="mindmapViewport" class="mindmap-viewport flex-1 relative overflow-hidden w-full h-full">
+          <div id="mindmapStage" class="absolute top-0 left-0 origin-top-left" style="width: 3600px; height: 2800px;">
+            <svg id="mindmapSvg" class="absolute inset-0 w-full h-full pointer-events-none" width="3600" height="2800"></svg>
+            <div id="mindmapNodesLayer" class="absolute inset-0 w-full h-full"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 2: KILL-CHAIN MATRIX VIEW -->
+      <section id="viewMatrix" class="hidden flex-1 flex flex-col p-4 overflow-y-auto custom-scroll bg-slate-950">
+        <div class="max-w-[1750px] mx-auto w-full space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 p-4 rounded-2xl">
+            <div>
+              <h2 class="text-base font-bold text-white">ตาราง MITRE ATT&amp;CK® Kill-Chain Matrix (เรียงตามลำดับขั้นตอนการโจมตี)</h2>
+              <p class="text-xs text-slate-400 mt-0.5">คลิกที่การ์ด Tactic หรือ Technique เพื่อเปิดดูรายละเอียดเชิงลึก วิธีตรวจจับ (Data Sources) และการป้องกัน (Mitigations) ทางด้านขวา</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button onclick="setMatrixPlatform('enterprise')" id="matBtnEnterprise" class="px-3 py-1.5 rounded-xl text-xs font-medium bg-indigo-600 text-white">Enterprise (15 Tactics - v20.0)</button>
+              <button onclick="setMatrixPlatform('mobile')" id="matBtnMobile" class="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 text-slate-300 hover:text-white">Mobile (Android &amp; iOS)</button>
+              <button onclick="setMatrixPlatform('ics')" id="matBtnIcs" class="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 text-slate-300 hover:text-white">ICS / OT Matrix</button>
+            </div>
+          </div>
+          <div id="matrixGridContainer" class="flex gap-3 overflow-x-auto pb-4 custom-scroll"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 3: APT GROUPS & MALWARE EXPLORER -->
+      <section id="viewGroups" class="hidden flex-1 flex flex-col p-4 overflow-y-auto custom-scroll bg-slate-950">
+        <div class="max-w-6xl mx-auto w-full space-y-4">
+          <div class="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl">
+            <h2 class="text-base font-bold text-white">ฐานข้อมูลกลุ่มผู้โจมตี (APT Groups), แคมเปญ และซอฟต์แวร์สำคัญ</h2>
+            <p class="text-xs text-slate-400 mt-0.5">เชื่อมโยงกลุ่มภัยคุกคามระดับโลกเข้ากับ Tactics &amp; Techniques บน MITRE ATT&amp;CK พร้อมกดปุ่ม "จำลองเส้นทางโจมตีบน Mind Map" ได้ทันที</p>
+          </div>
+          <div id="aptCardsGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 4: ROLE PLAYBOOKS -->
+      <section id="viewPlaybook" class="hidden flex-1 flex flex-col p-4 overflow-y-auto custom-scroll bg-slate-950">
+        <div class="max-w-6xl mx-auto w-full space-y-4">
+          <div class="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl">
+            <h2 class="text-base font-bold text-white">คู่มือการนำ MITRE ATT&amp;CK® ไปใช้งานจริงตามบทบาท (Operational Playbooks)</h2>
+            <p class="text-xs text-slate-400 mt-0.5">สรุปแนวทางประยุกต์ใช้ครบทุกด้าน: SOC / Blue Team, Red Team / Pentest, Cyber Threat Intelligence (CTI) และ Purple Team / CISO</p>
+          </div>
+          <div id="playbookCardsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 5: FULL DATABASE EXPLORER -->
+      <section id="viewDatabase" class="hidden flex-1 flex flex-col p-4 overflow-y-auto custom-scroll bg-slate-950">
+        <div class="max-w-[1750px] mx-auto w-full space-y-4">
+          <div class="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl flex flex-wrap items-center justify-between gap-3">
+            <div class="min-w-0">
+              <h2 class="text-base font-bold text-white flex flex-wrap items-center gap-2">
+                <span>📚 ฐานข้อมูล MITRE ATT&amp;CK® v20.0 ครบทุกข้อ</span>
+                <span id="dbCountBadge" class="px-2.5 py-0.5 rounded-full text-xs font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">935 Techniques &amp; Sub-techniques</span>
+              </h2>
+              <p class="text-xs text-slate-400 mt-0.5">ครอบคลุมครบ 3 Domains • 18 Sub-domain Platforms • 39 Tactics • 383 Techniques • 552 Sub-techniques • 18 ICS Assets — คลิกที่แถวใดๆ เพื่อเปิดดูบน Mind Map หรือแตกโหนดย่อยได้ทันที</p>
+              <p class="text-[11px] text-slate-500 mt-0.5">ข้อมูลรวบรวมจาก attack.mitre.org — โปรดตรวจสอบกับเว็บไซต์ทางการก่อนใช้อ้างอิงในงานจริง</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <select id="dbDomainSelect" onchange="renderDatabaseView()" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-200 outline-none">
+                <option value="all">ทุก Domain (Enterprise + Mobile + ICS)</option>
+                <option value="enterprise">Enterprise (227 Techs + 479 Sub-techs)</option>
+                <option value="mobile">Mobile Android/iOS (78 Techs + 47 Sub-techs)</option>
+                <option value="ics">ICS / OT (78 Techs + 26 Sub-techs + 18 Assets)</option>
+              </select>
+              <select id="dbTypeSelect" onchange="renderDatabaseView()" class="bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-200 outline-none">
+                <option value="all">แสดงทั้ง Techniques &amp; Sub-techniques</option>
+                <option value="technique">เฉพาะ Techniques หลัก</option>
+                <option value="subtechnique">เฉพาะ Sub-techniques ย่อย</option>
+                <option value="subdomain">เฉพาะ Sub-domain Platforms (18 แพลตฟอร์ม)</option>
+                <option value="asset">เฉพาะ ICS Assets (A0001 - A0018)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
+            <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
+              <div class="text-slate-400 text-[11px]">Sub-Domains (Matrices)</div>
+              <div class="text-lg font-extrabold text-amber-300 font-mono mt-0.5">18 แพลตฟอร์ม</div>
+              <div class="text-[10px] text-slate-500">PRE, Win, Mac, Linux, Cloud, Mobile, ICS</div>
+            </div>
+            <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
+              <div class="text-slate-400 text-[11px]">Tactics ทั้งหมด</div>
+              <div class="text-lg font-extrabold text-cyan-300 font-mono mt-0.5">39 Tactics</div>
+              <div class="text-[10px] text-slate-500">15 Ent • 12 Mobile • 12 ICS</div>
+            </div>
+            <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
+              <div class="text-slate-400 text-[11px]">Enterprise TTPs</div>
+              <div class="text-lg font-extrabold text-indigo-300 font-mono mt-0.5" id="statEnt">706 ข้อ</div>
+              <div class="text-[10px] text-slate-500" id="statEntSub">227 Techniques + 479 Sub-techs</div>
+            </div>
+            <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
+              <div class="text-slate-400 text-[11px]">Mobile TTPs</div>
+              <div class="text-lg font-extrabold text-purple-300 font-mono mt-0.5" id="statMob">125 ข้อ</div>
+              <div class="text-[10px] text-slate-500" id="statMobSub">78 Techniques + 47 Sub-techs</div>
+            </div>
+            <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
+              <div class="text-slate-400 text-[11px]">ICS / OT TTPs</div>
+              <div class="text-lg font-extrabold text-emerald-300 font-mono mt-0.5" id="statIcs">104 ข้อ</div>
+              <div class="text-[10px] text-slate-500" id="statIcsSub">78 Techniques + 26 Sub-techs</div>
+            </div>
+            <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
+              <div class="text-slate-400 text-[11px]">ICS Assets &amp; Defenses</div>
+              <div class="text-lg font-extrabold text-rose-300 font-mono mt-0.5">18 Assets</div>
+              <div class="text-[10px] text-slate-500">A0001–A0018 + M10xx Mitigations</div>
+            </div>
+          </div>
+
+          <div class="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden">
+            <div class="overflow-x-auto max-h-[62vh] custom-scroll">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead class="bg-slate-950 sticky top-0 z-10 border-b border-slate-800 text-[11px] text-slate-400 uppercase">
+                  <tr>
+                    <th class="py-2.5 px-3 font-semibold">รหัส (ID)</th>
+                    <th class="py-2.5 px-3 font-semibold">ชื่อหัวข้อ (Name)</th>
+                    <th class="py-2.5 px-3 font-semibold">ประเภท / Domain</th>
+                    <th class="py-2.5 px-3 font-semibold">Sub-Domains (Platforms)</th>
+                    <th class="py-2.5 px-3 font-semibold">คำอธิบายจาก MITRE ATT&amp;CK®</th>
+                    <th class="py-2.5 px-3 font-semibold text-right">การโต้ตอบ</th>
+                  </tr>
+                </thead>
+                <tbody id="databaseTableBody" class="divide-y divide-slate-800/70"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- RIGHT SIDEBAR: INSPECTOR PANEL -->
+    <aside id="inspectorPanel" class="w-full lg:w-[430px] xl:w-[460px] bg-slate-900/95 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col max-h-[82vh] lg:max-h-[calc(100vh-112px)] shrink-0">
+      <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-2 bg-slate-950/60">
+        <div class="flex items-center gap-2 min-w-0">
+          <span id="inspBadgeId" class="px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">MITRE ATT&amp;CK</span>
+          <span id="inspCategoryTag" class="text-[11px] text-slate-400 truncate">Framework Overview</span>
+        </div>
+        <a id="inspOfficialLink" href="https://attack.mitre.org/" target="_blank" rel="noopener noreferrer" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-indigo-600 text-xs text-slate-200 hover:text-white flex items-center gap-1 transition-colors shrink-0">
+          <span>เว็บทางการ MITRE</span>
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>
+        </a>
+      </div>
+      <div id="inspectorBody" class="p-4 overflow-y-auto custom-scroll flex-1 space-y-4 text-xs"></div>
+    </aside>
+
+  </div>
+
+  <!-- EXPORT MODAL -->
+  <div id="exportModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[88vh]">
+      <div class="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between gap-2">
+        <div class="min-w-0">
+          <h3 class="text-sm font-bold text-white">ส่งออกโครงสร้าง Mind Map (Mermaid / Markdown / ATT&amp;CK Navigator JSON)</h3>
+          <p class="text-[11px] text-slate-400">นำไปวางใน Notion, Obsidian, Draw.io, XMind หรืออัปโหลดเข้า MITRE ATT&amp;CK Navigator ได้ทันที</p>
+        </div>
+        <button onclick="closeExportModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800">✕</button>
+      </div>
+
+      <div class="px-5 pt-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+        <div class="flex flex-wrap items-center gap-1.5">
+          <button onclick="switchExportFormat('mermaid')" id="expBtnMermaid" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white">Mermaid Mindmap</button>
+          <button onclick="switchExportFormat('markdown')" id="expBtnMarkdown" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:text-white">Markdown Outline (.md)</button>
+          <button onclick="switchExportFormat('navigator')" id="expBtnNavigator" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:text-white">ATT&amp;CK Navigator Layer (.json)</button>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="copyExportCode()" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors">คัดลอกโค้ด (Copy)</button>
+          <button onclick="downloadExportFile()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors">ดาวน์โหลดไฟล์</button>
+        </div>
+      </div>
+
+      <div class="p-4 flex-1 overflow-hidden flex flex-col">
+        <textarea id="exportTextarea" readonly class="w-full h-80 bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs text-slate-200 outline-none resize-none custom-scroll"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastNotice" class="hidden fixed bottom-5 right-5 z-50 bg-indigo-600 text-white px-4 py-2.5 rounded-xl shadow-xl text-xs font-medium border border-indigo-400/40"></div>
+
+  <!-- Data first (globals), then application logic -->
+  <script src="assets/mitre-db.js"></script>
+  <script src="assets/curated.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
