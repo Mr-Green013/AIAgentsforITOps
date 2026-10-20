@@ -1658,33 +1658,26 @@ function clearSearch() {
 // =========================================================================
 function generateExportText(format) {
   if (format === 'mermaid') {
-    const ent = NODE_MAP.get('DOM-ENT');
-    const lines = [
-      'mindmap',
-      '  root((MITRE ATT&CK v20.0))',
-      `    Enterprise Matrix (${ent && ent.children ? ent.children.length : 15} Tactics)`
-    ];
-    if (ent && ent.children) {
-      ent.children.forEach(tac => {
-        lines.push(`      ${tac.code} ${tac.title.replace(/[()]/g, '')}`);
+    // Mermaid mindmap treats ( ) [ ] { } as node-shape syntax, so strip them from labels.
+    const label = (s) => String(s).replace(/[()[\]{}]/g, '').replace(/\s+/g, ' ').trim();
+    const lines = ['mindmap', `  root((MITRE ATT&CK v${MITRE_FULL_DB.version}))`];
+    // Domain → tactic/group → technique, generated from the tree for every branch
+    // (sub-techniques are left out to keep the diagram readable).
+    MINDMAP_DATA.children.forEach(dom => {
+      lines.push(`    ${label(dom.title)}`);
+      (dom.children || []).forEach(tac => {
+        lines.push(`      ${label(`${tac.code} ${tac.title}`)}`);
         (tac.children || []).forEach(tech => {
-          lines.push(`        ${tech.code} ${tech.title.replace(/[()]/g, '')}`);
+          if (tech.nodeType !== 'technique') return;
+          lines.push(`        ${label(`${tech.code} ${tech.title}`)}`);
         });
       });
-    }
-    lines.push('    Mobile Matrix (Android & iOS)');
-    lines.push('      TA0027 Initial Access & Repackaged Apps');
-    lines.push('      TA0031 Credential Access & Accessibility Abuse');
-    lines.push('    ICS / OT Matrix');
-    lines.push('      TA0107 Inhibit Response & Modify PLC Parameter');
-    lines.push('    APT Groups & Software');
-    lines.push('      G0016 APT29 Cozy Bear & C0024 SolarWinds');
-    lines.push('      G0007 APT28 Fancy Bear');
-    lines.push('      G0032 Lazarus Group & G0082 APT38');
-    lines.push('      G0034 Sandworm Team & S0002 Mimikatz');
-    lines.push('    Operational Defense (Blue / Red / Purple)');
-    lines.push('      Top Data Sources (Sysmon & SIEM)');
-    lines.push('      Enterprise Mitigations (M10xx)');
+    });
+    lines.push('    APT Kill-Chain Overlays');
+    Object.values(APT_PROFILES).forEach(apt => {
+      lines.push(`      ${label(`${apt.id} ${apt.name}`)}`);
+      lines.push(`        ${label(apt.techniques.join(' '))}`);
+    });
     return lines.join('\n');
   }
 

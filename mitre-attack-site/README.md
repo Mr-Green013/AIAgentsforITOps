@@ -30,8 +30,7 @@ python3 -m http.server 8080
 
 เป็นไฟล์ static ล้วน ไม่ต้องมี backend — วางบน GitHub Pages, Azure Static Web Apps, Nginx หรือ S3 ได้ทันที
 
-**GitHub Pages:** Settings → Pages → Source: *Deploy from a branch* → เลือก branch และโฟลเดอร์ที่มีไฟล์นี้
-(GitHub Pages รองรับเฉพาะ `/` หรือ `/docs` — ถ้าใช้วิธีนี้ให้ย้ายโฟลเดอร์ไปที่ `/docs` หรือใช้ GitHub Actions workflow สำหรับ Pages)
+**GitHub Pages:** มี workflow `.github/workflows/mitre-attack-site-pages.yml` ที่ deploy โฟลเดอร์นี้อัตโนมัติเมื่อมีการ push เข้า `main` — ต้องตั้งค่าครั้งแรกที่ Settings → Pages → Source: **GitHub Actions**
 
 ## หมายเหตุด้านความปลอดภัย
 
